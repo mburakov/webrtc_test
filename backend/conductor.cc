@@ -25,7 +25,7 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "talk/examples/peerconnection/client/conductor.h"
+#include "conductor.h"
 
 #include <utility>
 
@@ -33,7 +33,7 @@
 #include "talk/base/common.h"
 #include "talk/base/json.h"
 #include "talk/base/logging.h"
-#include "talk/examples/peerconnection/client/defaults.h"
+#include "defaults.h"
 #include "talk/media/devices/devicemanager.h"
 
 // Names used for a IceCandidate JSON object.

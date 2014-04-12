@@ -34,7 +34,7 @@
 
 #include "talk/app/webrtc/mediastreaminterface.h"
 #include "talk/base/win32.h"
-#include "talk/examples/peerconnection/client/peer_connection_client.h"
+#include "peer_connection_client.h"
 #include "talk/media/base/mediachannel.h"
 #include "talk/media/base/videocommon.h"
 #include "talk/media/base/videoframe.h"
