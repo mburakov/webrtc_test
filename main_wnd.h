@@ -25,80 +25,28 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef PEERCONNECTION_SAMPLES_CLIENT_MAIN_WND_H_
-#define PEERCONNECTION_SAMPLES_CLIENT_MAIN_WND_H_
-#pragma once
 
-#include <map>
-#include <string>
+#ifndef PEERCONNECTION_SAMPLES_CLIENT_LINUX_MAIN_WND_H_
+#define PEERCONNECTION_SAMPLES_CLIENT_LINUX_MAIN_WND_H_
 
-#include "talk/app/webrtc/mediastreaminterface.h"
-#include "talk/base/win32.h"
+#include "talk/examples/peerconnection/client/main_wnd.h"
 #include "talk/examples/peerconnection/client/peer_connection_client.h"
-#include "talk/media/base/mediachannel.h"
-#include "talk/media/base/videocommon.h"
-#include "talk/media/base/videoframe.h"
-#include "talk/media/base/videorenderer.h"
 
-class MainWndCallback {
+// Forward declarations.
+typedef struct _GtkWidget GtkWidget;
+typedef union _GdkEvent GdkEvent;
+typedef struct _GdkEventKey GdkEventKey;
+typedef struct _GtkTreeView GtkTreeView;
+typedef struct _GtkTreePath GtkTreePath;
+typedef struct _GtkTreeViewColumn GtkTreeViewColumn;
+
+// Implements the main UI of the peer connection client.
+// This is functionally equivalent to the MainWnd class in the Windows
+// implementation.
+class GtkMainWnd : public MainWindow {
  public:
-  virtual void StartLogin(const std::string& server, int port) = 0;
-  virtual void DisconnectFromServer() = 0;
-  virtual void ConnectToPeer(int peer_id) = 0;
-  virtual void DisconnectFromCurrentPeer() = 0;
-  virtual void UIThreadCallback(int msg_id, void* data) = 0;
-  virtual void Close() = 0;
- protected:
-  virtual ~MainWndCallback() {}
-};
-
-// Pure virtual interface for the main window.
-class MainWindow {
- public:
-  virtual ~MainWindow() {}
-
-  enum UI {
-    CONNECT_TO_SERVER,
-    LIST_PEERS,
-    STREAMING,
-  };
-
-  virtual void RegisterObserver(MainWndCallback* callback) = 0;
-
-  virtual bool IsWindow() = 0;
-  virtual void MessageBox(const char* caption, const char* text,
-                          bool is_error) = 0;
-
-  virtual UI current_ui() = 0;
-
-  virtual void SwitchToConnectUI() = 0;
-  virtual void SwitchToPeerList(const Peers& peers) = 0;
-  virtual void SwitchToStreamingUI() = 0;
-
-  virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video) = 0;
-  virtual void StopLocalRenderer() = 0;
-  virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) = 0;
-  virtual void StopRemoteRenderer() = 0;
-
-  virtual void QueueUIThreadCallback(int msg_id, void* data) = 0;
-};
-
-#ifdef WIN32
-
-class MainWnd : public MainWindow {
- public:
-  static const wchar_t kClassName[];
-
-  enum WindowMessages {
-    UI_THREAD_CALLBACK = WM_APP + 1,
-  };
-
-  MainWnd();
-  ~MainWnd();
-
-  bool Create();
-  bool Destroy();
-  bool PreTranslateMessage(MSG* msg);
+  GtkMainWnd(const char* server, int port, bool autoconnect, bool autocall);
+  ~GtkMainWnd();
 
   virtual void RegisterObserver(MainWndCallback* callback);
   virtual bool IsWindow();
@@ -107,8 +55,7 @@ class MainWnd : public MainWindow {
   virtual void SwitchToStreamingUI();
   virtual void MessageBox(const char* caption, const char* text,
                           bool is_error);
-  virtual UI current_ui() { return ui_; }
-
+  virtual MainWindow::UI current_ui();
   virtual void StartLocalRenderer(webrtc::VideoTrackInterface* local_video);
   virtual void StopLocalRenderer();
   virtual void StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video);
@@ -116,98 +63,76 @@ class MainWnd : public MainWindow {
 
   virtual void QueueUIThreadCallback(int msg_id, void* data);
 
-  HWND handle() const { return wnd_; }
+  // Creates and shows the main window with the |Connect UI| enabled.
+  bool Create();
 
+  // Destroys the window.  When the window is destroyed, it ends the
+  // main message loop.
+  bool Destroy();
+
+  // Callback for when the main window is destroyed.
+  void OnDestroyed(GtkWidget* widget, GdkEvent* event);
+
+  // Callback for when the user clicks the "Connect" button.
+  void OnClicked(GtkWidget* widget);
+
+  // Callback for keystrokes.  Used to capture Esc and Return.
+  void OnKeyPress(GtkWidget* widget, GdkEventKey* key);
+
+  // Callback when the user double clicks a peer in order to initiate a
+  // connection.
+  void OnRowActivated(GtkTreeView* tree_view, GtkTreePath* path,
+                      GtkTreeViewColumn* column);
+
+  void OnRedraw();
+
+ protected:
   class VideoRenderer : public webrtc::VideoRendererInterface {
    public:
-    VideoRenderer(HWND wnd, int width, int height,
+    VideoRenderer(GtkMainWnd* main_wnd,
                   webrtc::VideoTrackInterface* track_to_render);
     virtual ~VideoRenderer();
-
-    void Lock() {
-      ::EnterCriticalSection(&buffer_lock_);
-    }
-
-    void Unlock() {
-      ::LeaveCriticalSection(&buffer_lock_);
-    }
 
     // VideoRendererInterface implementation
     virtual void SetSize(int width, int height);
     virtual void RenderFrame(const cricket::VideoFrame* frame);
 
-    const BITMAPINFO& bmi() const { return bmi_; }
-    const uint8* image() const { return image_.get(); }
+    const uint8* image() const {
+      return image_.get();
+    }
+
+    int width() const {
+      return width_;
+    }
+
+    int height() const {
+      return height_;
+    }
 
    protected:
-    enum {
-      SET_SIZE,
-      RENDER_FRAME,
-    };
-
-    HWND wnd_;
-    BITMAPINFO bmi_;
     talk_base::scoped_ptr<uint8[]> image_;
-    CRITICAL_SECTION buffer_lock_;
+    int width_;
+    int height_;
+    GtkMainWnd* main_wnd_;
     talk_base::scoped_refptr<webrtc::VideoTrackInterface> rendered_track_;
   };
 
-  // A little helper class to make sure we always to proper locking and
-  // unlocking when working with VideoRenderer buffers.
-  template <typename T>
-  class AutoLock {
-   public:
-    explicit AutoLock(T* obj) : obj_(obj) { obj_->Lock(); }
-    ~AutoLock() { obj_->Unlock(); }
-   protected:
-    T* obj_;
-  };
-
  protected:
-  enum ChildWindowID {
-    EDIT_ID = 1,
-    BUTTON_ID,
-    LABEL1_ID,
-    LABEL2_ID,
-    LISTBOX_ID,
-  };
-
-  void OnPaint();
-  void OnDestroyed();
-
-  void OnDefaultAction();
-
-  bool OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result);
-
-  static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
-  static bool RegisterWindowClass();
-
-  void CreateChildWindow(HWND* wnd, ChildWindowID id, const wchar_t* class_name,
-                         DWORD control_style, DWORD ex_style);
-  void CreateChildWindows();
-
-  void LayoutConnectUI(bool show);
-  void LayoutPeerListUI(bool show);
-
-  void HandleTabbing();
-
- private:
+  GtkWidget* window_;  // Our main window.
+  GtkWidget* draw_area_;  // The drawing surface for rendering video streams.
+  GtkWidget* vbox_;  // Container for the Connect UI.
+  GtkWidget* server_edit_;
+  GtkWidget* port_edit_;
+  GtkWidget* peer_list_;  // The list of peers.
+  MainWndCallback* callback_;
+  std::string server_;
+  std::string port_;
+  bool autoconnect_;
+  bool autocall_;
   talk_base::scoped_ptr<VideoRenderer> local_renderer_;
   talk_base::scoped_ptr<VideoRenderer> remote_renderer_;
-  UI ui_;
-  HWND wnd_;
-  DWORD ui_thread_id_;
-  HWND edit1_;
-  HWND edit2_;
-  HWND label1_;
-  HWND label2_;
-  HWND button_;
-  HWND listbox_;
-  bool destroyed_;
-  void* nested_msg_;
-  MainWndCallback* callback_;
-  static ATOM wnd_class_;
+  talk_base::scoped_ptr<uint8> draw_buffer_;
+  int draw_buffer_size_;
 };
-#endif  // WIN32
 
-#endif  // PEERCONNECTION_SAMPLES_CLIENT_MAIN_WND_H_
+#endif  // PEERCONNECTION_SAMPLES_CLIENT_LINUX_MAIN_WND_H_

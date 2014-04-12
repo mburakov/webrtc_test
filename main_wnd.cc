@@ -25,581 +25,496 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "talk/examples/peerconnection/client/main_wnd.h"
 
-#include <math.h>
+#include "talk/examples/peerconnection/client/linux/main_wnd.h"
 
+#include <gdk/gdkkeysyms.h>
+#include <gtk/gtk.h>
+#include <stddef.h>
+
+#include "talk/examples/peerconnection/client/defaults.h"
 #include "talk/base/common.h"
 #include "talk/base/logging.h"
-#include "talk/examples/peerconnection/client/defaults.h"
+#include "talk/base/stringutils.h"
 
-ATOM MainWnd::wnd_class_ = 0;
-const wchar_t MainWnd::kClassName[] = L"WebRTC_MainWnd";
+using talk_base::sprintfn;
 
 namespace {
 
-const char kConnecting[] = "Connecting... ";
-const char kNoVideoStreams[] = "(no video streams either way)";
-const char kNoIncomingStream[] = "(no incoming video)";
+//
+// Simple static functions that simply forward the callback to the
+// GtkMainWnd instance.
+//
 
-void CalculateWindowSizeForText(HWND wnd, const wchar_t* text,
-                                size_t* width, size_t* height) {
-  HDC dc = ::GetDC(wnd);
-  RECT text_rc = {0};
-  ::DrawText(dc, text, -1, &text_rc, DT_CALCRECT | DT_SINGLELINE);
-  ::ReleaseDC(wnd, dc);
-  RECT client, window;
-  ::GetClientRect(wnd, &client);
-  ::GetWindowRect(wnd, &window);
-
-  *width = text_rc.right - text_rc.left;
-  *width += (window.right - window.left) -
-            (client.right - client.left);
-  *height = text_rc.bottom - text_rc.top;
-  *height += (window.bottom - window.top) -
-             (client.bottom - client.top);
+gboolean OnDestroyedCallback(GtkWidget* widget, GdkEvent* event,
+                             gpointer data) {
+  reinterpret_cast<GtkMainWnd*>(data)->OnDestroyed(widget, event);
+  return FALSE;
 }
 
-HFONT GetDefaultFont() {
-  static HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-  return font;
+void OnClickedCallback(GtkWidget* widget, gpointer data) {
+  reinterpret_cast<GtkMainWnd*>(data)->OnClicked(widget);
 }
 
-std::string GetWindowText(HWND wnd) {
-  char text[MAX_PATH] = {0};
-  ::GetWindowTextA(wnd, &text[0], ARRAYSIZE(text));
-  return text;
-}
-
-void AddListBoxItem(HWND listbox, const std::string& str, LPARAM item_data) {
-  LRESULT index = ::SendMessageA(listbox, LB_ADDSTRING, 0,
-      reinterpret_cast<LPARAM>(str.c_str()));
-  ::SendMessageA(listbox, LB_SETITEMDATA, index, item_data);
-}
-
-}  // namespace
-
-MainWnd::MainWnd()
-  : ui_(CONNECT_TO_SERVER), wnd_(NULL), edit1_(NULL), edit2_(NULL),
-    label1_(NULL), label2_(NULL), button_(NULL), listbox_(NULL),
-    destroyed_(false), callback_(NULL), nested_msg_(NULL) {
-}
-
-MainWnd::~MainWnd() {
-  ASSERT(!IsWindow());
-}
-
-bool MainWnd::Create() {
-  ASSERT(wnd_ == NULL);
-  if (!RegisterWindowClass())
-    return false;
-
-  ui_thread_id_ = ::GetCurrentThreadId();
-  wnd_ = ::CreateWindowExW(WS_EX_OVERLAPPEDWINDOW, kClassName, L"WebRTC",
-      WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
-      CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-      NULL, NULL, GetModuleHandle(NULL), this);
-
-  ::SendMessage(wnd_, WM_SETFONT, reinterpret_cast<WPARAM>(GetDefaultFont()),
-                TRUE);
-
-  CreateChildWindows();
-  SwitchToConnectUI();
-
-  return wnd_ != NULL;
-}
-
-bool MainWnd::Destroy() {
-  BOOL ret = FALSE;
-  if (IsWindow()) {
-    ret = ::DestroyWindow(wnd_);
-  }
-
-  return ret != FALSE;
-}
-
-void MainWnd::RegisterObserver(MainWndCallback* callback) {
-  callback_ = callback;
-}
-
-bool MainWnd::IsWindow() {
-  return wnd_ && ::IsWindow(wnd_) != FALSE;
-}
-
-bool MainWnd::PreTranslateMessage(MSG* msg) {
-  bool ret = false;
-  if (msg->message == WM_CHAR) {
-    if (msg->wParam == VK_TAB) {
-      HandleTabbing();
-      ret = true;
-    } else if (msg->wParam == VK_RETURN) {
-      OnDefaultAction();
-      ret = true;
-    } else if (msg->wParam == VK_ESCAPE) {
-      if (callback_) {
-        if (ui_ == STREAMING) {
-          callback_->DisconnectFromCurrentPeer();
-        } else {
-          callback_->DisconnectFromServer();
-        }
-      }
-    }
-  } else if (msg->hwnd == NULL && msg->message == UI_THREAD_CALLBACK) {
-    callback_->UIThreadCallback(static_cast<int>(msg->wParam),
-                                reinterpret_cast<void*>(msg->lParam));
-    ret = true;
-  }
-  return ret;
-}
-
-void MainWnd::SwitchToConnectUI() {
-  ASSERT(IsWindow());
-  LayoutPeerListUI(false);
-  ui_ = CONNECT_TO_SERVER;
-  LayoutConnectUI(true);
-  ::SetFocus(edit1_);
-}
-
-void MainWnd::SwitchToPeerList(const Peers& peers) {
-  LayoutConnectUI(false);
-
-  ::SendMessage(listbox_, LB_RESETCONTENT, 0, 0);
-
-  AddListBoxItem(listbox_, "List of currently connected peers:", -1);
-  Peers::const_iterator i = peers.begin();
-  for (; i != peers.end(); ++i)
-    AddListBoxItem(listbox_, i->second.c_str(), i->first);
-
-  ui_ = LIST_PEERS;
-  LayoutPeerListUI(true);
-  ::SetFocus(listbox_);
-}
-
-void MainWnd::SwitchToStreamingUI() {
-  LayoutConnectUI(false);
-  LayoutPeerListUI(false);
-  ui_ = STREAMING;
-}
-
-void MainWnd::MessageBox(const char* caption, const char* text, bool is_error) {
-  DWORD flags = MB_OK;
-  if (is_error)
-    flags |= MB_ICONERROR;
-
-  ::MessageBoxA(handle(), text, caption, flags);
-}
-
-
-void MainWnd::StartLocalRenderer(webrtc::VideoTrackInterface* local_video) {
-  local_renderer_.reset(new VideoRenderer(handle(), 1, 1, local_video));
-}
-
-void MainWnd::StopLocalRenderer() {
-  local_renderer_.reset();
-}
-
-void MainWnd::StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) {
-  remote_renderer_.reset(new VideoRenderer(handle(), 1, 1, remote_video));
-}
-
-void MainWnd::StopRemoteRenderer() {
-  remote_renderer_.reset();
-}
-
-void MainWnd::QueueUIThreadCallback(int msg_id, void* data) {
-  ::PostThreadMessage(ui_thread_id_, UI_THREAD_CALLBACK,
-      static_cast<WPARAM>(msg_id), reinterpret_cast<LPARAM>(data));
-}
-
-void MainWnd::OnPaint() {
-  PAINTSTRUCT ps;
-  ::BeginPaint(handle(), &ps);
-
-  RECT rc;
-  ::GetClientRect(handle(), &rc);
-
-  VideoRenderer* local_renderer = local_renderer_.get();
-  VideoRenderer* remote_renderer = remote_renderer_.get();
-  if (ui_ == STREAMING && remote_renderer && local_renderer) {
-    AutoLock<VideoRenderer> local_lock(local_renderer);
-    AutoLock<VideoRenderer> remote_lock(remote_renderer);
-
-    const BITMAPINFO& bmi = remote_renderer->bmi();
-    int height = abs(bmi.bmiHeader.biHeight);
-    int width = bmi.bmiHeader.biWidth;
-
-    const uint8* image = remote_renderer->image();
-    if (image != NULL) {
-      HDC dc_mem = ::CreateCompatibleDC(ps.hdc);
-      ::SetStretchBltMode(dc_mem, HALFTONE);
-
-      // Set the map mode so that the ratio will be maintained for us.
-      HDC all_dc[] = { ps.hdc, dc_mem };
-      for (int i = 0; i < ARRAY_SIZE(all_dc); ++i) {
-        SetMapMode(all_dc[i], MM_ISOTROPIC);
-        SetWindowExtEx(all_dc[i], width, height, NULL);
-        SetViewportExtEx(all_dc[i], rc.right, rc.bottom, NULL);
-      }
-
-      HBITMAP bmp_mem = ::CreateCompatibleBitmap(ps.hdc, rc.right, rc.bottom);
-      HGDIOBJ bmp_old = ::SelectObject(dc_mem, bmp_mem);
-
-      POINT logical_area = { rc.right, rc.bottom };
-      DPtoLP(ps.hdc, &logical_area, 1);
-
-      HBRUSH brush = ::CreateSolidBrush(RGB(0, 0, 0));
-      RECT logical_rect = {0, 0, logical_area.x, logical_area.y };
-      ::FillRect(dc_mem, &logical_rect, brush);
-      ::DeleteObject(brush);
-
-      int x = (logical_area.x / 2) - (width / 2);
-      int y = (logical_area.y / 2) - (height / 2);
-
-      StretchDIBits(dc_mem, x, y, width, height,
-                    0, 0, width, height, image, &bmi, DIB_RGB_COLORS, SRCCOPY);
-
-      if ((rc.right - rc.left) > 200 && (rc.bottom - rc.top) > 200) {
-        const BITMAPINFO& bmi = local_renderer->bmi();
-        image = local_renderer->image();
-        int thumb_width = bmi.bmiHeader.biWidth / 4;
-        int thumb_height = abs(bmi.bmiHeader.biHeight) / 4;
-        StretchDIBits(dc_mem,
-            logical_area.x - thumb_width - 10,
-            logical_area.y - thumb_height - 10,
-            thumb_width, thumb_height,
-            0, 0, bmi.bmiHeader.biWidth, -bmi.bmiHeader.biHeight,
-            image, &bmi, DIB_RGB_COLORS, SRCCOPY);
-      }
-
-      BitBlt(ps.hdc, 0, 0, logical_area.x, logical_area.y,
-             dc_mem, 0, 0, SRCCOPY);
-
-      // Cleanup.
-      ::SelectObject(dc_mem, bmp_old);
-      ::DeleteObject(bmp_mem);
-      ::DeleteDC(dc_mem);
-    } else {
-      // We're still waiting for the video stream to be initialized.
-      HBRUSH brush = ::CreateSolidBrush(RGB(0, 0, 0));
-      ::FillRect(ps.hdc, &rc, brush);
-      ::DeleteObject(brush);
-
-      HGDIOBJ old_font = ::SelectObject(ps.hdc, GetDefaultFont());
-      ::SetTextColor(ps.hdc, RGB(0xff, 0xff, 0xff));
-      ::SetBkMode(ps.hdc, TRANSPARENT);
-
-      std::string text(kConnecting);
-      if (!local_renderer->image()) {
-        text += kNoVideoStreams;
-      } else {
-        text += kNoIncomingStream;
-      }
-      ::DrawTextA(ps.hdc, text.c_str(), -1, &rc,
-          DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-      ::SelectObject(ps.hdc, old_font);
-    }
-  } else {
-    HBRUSH brush = ::CreateSolidBrush(::GetSysColor(COLOR_WINDOW));
-    ::FillRect(ps.hdc, &rc, brush);
-    ::DeleteObject(brush);
-  }
-
-  ::EndPaint(handle(), &ps);
-}
-
-void MainWnd::OnDestroyed() {
-  PostQuitMessage(0);
-}
-
-void MainWnd::OnDefaultAction() {
-  if (!callback_)
-    return;
-  if (ui_ == CONNECT_TO_SERVER) {
-    std::string server(GetWindowText(edit1_));
-    std::string port_str(GetWindowText(edit2_));
-    int port = port_str.length() ? atoi(port_str.c_str()) : 0;
-    callback_->StartLogin(server, port);
-  } else if (ui_ == LIST_PEERS) {
-    LRESULT sel = ::SendMessage(listbox_, LB_GETCURSEL, 0, 0);
-    if (sel != LB_ERR) {
-      LRESULT peer_id = ::SendMessage(listbox_, LB_GETITEMDATA, sel, 0);
-      if (peer_id != -1 && callback_) {
-        callback_->ConnectToPeer(peer_id);
-      }
-    }
-  } else {
-    MessageBoxA(wnd_, "OK!", "Yeah", MB_OK);
-  }
-}
-
-bool MainWnd::OnMessage(UINT msg, WPARAM wp, LPARAM lp, LRESULT* result) {
-  switch (msg) {
-    case WM_ERASEBKGND:
-      *result = TRUE;
-      return true;
-
-    case WM_PAINT:
-      OnPaint();
-      return true;
-
-    case WM_SETFOCUS:
-      if (ui_ == CONNECT_TO_SERVER) {
-        SetFocus(edit1_);
-      } else if (ui_ == LIST_PEERS) {
-        SetFocus(listbox_);
-      }
-      return true;
-
-    case WM_SIZE:
-      if (ui_ == CONNECT_TO_SERVER) {
-        LayoutConnectUI(true);
-      } else if (ui_ == LIST_PEERS) {
-        LayoutPeerListUI(true);
-      }
-      break;
-
-    case WM_CTLCOLORSTATIC:
-      *result = reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
-      return true;
-
-    case WM_COMMAND:
-      if (button_ == reinterpret_cast<HWND>(lp)) {
-        if (BN_CLICKED == HIWORD(wp))
-          OnDefaultAction();
-      } else if (listbox_ == reinterpret_cast<HWND>(lp)) {
-        if (LBN_DBLCLK == HIWORD(wp)) {
-          OnDefaultAction();
-        }
-      }
-      return true;
-
-    case WM_CLOSE:
-      if (callback_)
-        callback_->Close();
-      break;
-  }
+gboolean SimulateButtonClick(gpointer button) {
+  g_signal_emit_by_name(button, "clicked");
   return false;
 }
 
-// static
-LRESULT CALLBACK MainWnd::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-  MainWnd* me = reinterpret_cast<MainWnd*>(
-      ::GetWindowLongPtr(hwnd, GWLP_USERDATA));
-  if (!me && WM_CREATE == msg) {
-    CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lp);
-    me = reinterpret_cast<MainWnd*>(cs->lpCreateParams);
-    me->wnd_ = hwnd;
-    ::SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(me));
+gboolean OnKeyPressCallback(GtkWidget* widget, GdkEventKey* key,
+                            gpointer data) {
+  reinterpret_cast<GtkMainWnd*>(data)->OnKeyPress(widget, key);
+  return false;
+}
+
+void OnRowActivatedCallback(GtkTreeView* tree_view, GtkTreePath* path,
+                            GtkTreeViewColumn* column, gpointer data) {
+  reinterpret_cast<GtkMainWnd*>(data)->OnRowActivated(tree_view, path, column);
+}
+
+gboolean SimulateLastRowActivated(gpointer data) {
+  GtkTreeView* tree_view = reinterpret_cast<GtkTreeView*>(data);
+  GtkTreeModel* model = gtk_tree_view_get_model(tree_view);
+
+  // "if iter is NULL, then the number of toplevel nodes is returned."
+  int rows = gtk_tree_model_iter_n_children(model, NULL);
+  GtkTreePath* lastpath = gtk_tree_path_new_from_indices(rows - 1, -1);
+
+  // Select the last item in the list
+  GtkTreeSelection* selection = gtk_tree_view_get_selection(tree_view);
+  gtk_tree_selection_select_path(selection, lastpath);
+
+  // Our TreeView only has one column, so it is column 0.
+  GtkTreeViewColumn* column = gtk_tree_view_get_column(tree_view, 0);
+
+  gtk_tree_view_row_activated(tree_view, lastpath, column);
+
+  gtk_tree_path_free(lastpath);
+  return false;
+}
+
+// Creates a tree view, that we use to display the list of peers.
+void InitializeList(GtkWidget* list) {
+  GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
+  GtkTreeViewColumn* column = gtk_tree_view_column_new_with_attributes(
+      "List Items", renderer, "text", 0, NULL);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(list), column);
+  GtkListStore* store = gtk_list_store_new(2, G_TYPE_STRING, G_TYPE_INT);
+  gtk_tree_view_set_model(GTK_TREE_VIEW(list), GTK_TREE_MODEL(store));
+  g_object_unref(store);
+}
+
+// Adds an entry to a tree view.
+void AddToList(GtkWidget* list, const gchar* str, int value) {
+  GtkListStore* store = GTK_LIST_STORE(
+      gtk_tree_view_get_model(GTK_TREE_VIEW(list)));
+
+  GtkTreeIter iter;
+  gtk_list_store_append(store, &iter);
+  gtk_list_store_set(store, &iter, 0, str, 1, value, -1);
+}
+
+struct UIThreadCallbackData {
+  explicit UIThreadCallbackData(MainWndCallback* cb, int id, void* d)
+      : callback(cb), msg_id(id), data(d) {}
+  MainWndCallback* callback;
+  int msg_id;
+  void* data;
+};
+
+gboolean HandleUIThreadCallback(gpointer data) {
+  UIThreadCallbackData* cb_data = reinterpret_cast<UIThreadCallbackData*>(data);
+  cb_data->callback->UIThreadCallback(cb_data->msg_id, cb_data->data);
+  delete cb_data;
+  return false;
+}
+
+gboolean Redraw(gpointer data) {
+  GtkMainWnd* wnd = reinterpret_cast<GtkMainWnd*>(data);
+  wnd->OnRedraw();
+  return false;
+}
+}  // end anonymous
+
+//
+// GtkMainWnd implementation.
+//
+
+GtkMainWnd::GtkMainWnd(const char* server, int port, bool autoconnect,
+                       bool autocall)
+    : window_(NULL), draw_area_(NULL), vbox_(NULL), server_edit_(NULL),
+      port_edit_(NULL), peer_list_(NULL), callback_(NULL),
+      server_(server), autoconnect_(autoconnect), autocall_(autocall) {
+  char buffer[10];
+  sprintfn(buffer, sizeof(buffer), "%i", port);
+  port_ = buffer;
+}
+
+GtkMainWnd::~GtkMainWnd() {
+  ASSERT(!IsWindow());
+}
+
+void GtkMainWnd::RegisterObserver(MainWndCallback* callback) {
+  callback_ = callback;
+}
+
+bool GtkMainWnd::IsWindow() {
+  return window_ != NULL && GTK_IS_WINDOW(window_);
+}
+
+void GtkMainWnd::MessageBox(const char* caption, const char* text,
+                            bool is_error) {
+  GtkWidget* dialog = gtk_message_dialog_new(GTK_WINDOW(window_),
+      GTK_DIALOG_DESTROY_WITH_PARENT,
+      is_error ? GTK_MESSAGE_ERROR : GTK_MESSAGE_INFO,
+      GTK_BUTTONS_CLOSE, "%s", text);
+  gtk_window_set_title(GTK_WINDOW(dialog), caption);
+  gtk_dialog_run(GTK_DIALOG(dialog));
+  gtk_widget_destroy(dialog);
+}
+
+MainWindow::UI GtkMainWnd::current_ui() {
+  if (vbox_)
+    return CONNECT_TO_SERVER;
+
+  if (peer_list_)
+    return LIST_PEERS;
+
+  return STREAMING;
+}
+
+
+void GtkMainWnd::StartLocalRenderer(webrtc::VideoTrackInterface* local_video) {
+  local_renderer_.reset(new VideoRenderer(this, local_video));
+}
+
+void GtkMainWnd::StopLocalRenderer() {
+  local_renderer_.reset();
+}
+
+void GtkMainWnd::StartRemoteRenderer(webrtc::VideoTrackInterface* remote_video) {
+  remote_renderer_.reset(new VideoRenderer(this, remote_video));
+}
+
+void GtkMainWnd::StopRemoteRenderer() {
+  remote_renderer_.reset();
+}
+
+void GtkMainWnd::QueueUIThreadCallback(int msg_id, void* data) {
+  g_idle_add(HandleUIThreadCallback,
+             new UIThreadCallbackData(callback_, msg_id, data));
+}
+
+bool GtkMainWnd::Create() {
+  ASSERT(window_ == NULL);
+
+  window_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  if (window_) {
+    gtk_window_set_position(GTK_WINDOW(window_), GTK_WIN_POS_CENTER);
+    gtk_window_set_default_size(GTK_WINDOW(window_), 640, 480);
+    gtk_window_set_title(GTK_WINDOW(window_), "PeerConnection client");
+    g_signal_connect(G_OBJECT(window_), "delete-event",
+                     G_CALLBACK(&OnDestroyedCallback), this);
+    g_signal_connect(window_, "key-press-event", G_CALLBACK(OnKeyPressCallback),
+                     this);
+
+    SwitchToConnectUI();
   }
 
-  LRESULT result = 0;
-  if (me) {
-    void* prev_nested_msg = me->nested_msg_;
-    me->nested_msg_ = &msg;
+  return window_ != NULL;
+}
 
-    bool handled = me->OnMessage(msg, wp, lp, &result);
-    if (WM_NCDESTROY == msg) {
-      me->destroyed_ = true;
-    } else if (!handled) {
-      result = ::DefWindowProc(hwnd, msg, wp, lp);
+bool GtkMainWnd::Destroy() {
+  if (!IsWindow())
+    return false;
+
+  gtk_widget_destroy(window_);
+  window_ = NULL;
+
+  return true;
+}
+
+void GtkMainWnd::SwitchToConnectUI() {
+  LOG(INFO) << __FUNCTION__;
+
+  ASSERT(IsWindow());
+  ASSERT(vbox_ == NULL);
+
+  gtk_container_set_border_width(GTK_CONTAINER(window_), 10);
+
+  if (peer_list_) {
+    gtk_widget_destroy(peer_list_);
+    peer_list_ = NULL;
+  }
+
+  vbox_ = gtk_vbox_new(FALSE, 5);
+  GtkWidget* valign = gtk_alignment_new(0, 1, 0, 0);
+  gtk_container_add(GTK_CONTAINER(vbox_), valign);
+  gtk_container_add(GTK_CONTAINER(window_), vbox_);
+
+  GtkWidget* hbox = gtk_hbox_new(FALSE, 5);
+
+  GtkWidget* label = gtk_label_new("Server");
+  gtk_container_add(GTK_CONTAINER(hbox), label);
+
+  server_edit_ = gtk_entry_new();
+  gtk_entry_set_text(GTK_ENTRY(server_edit_), server_.c_str());
+  gtk_widget_set_size_request(server_edit_, 400, 30);
+  gtk_container_add(GTK_CONTAINER(hbox), server_edit_);
+
+  port_edit_ = gtk_entry_new();
+  gtk_entry_set_text(GTK_ENTRY(port_edit_), port_.c_str());
+  gtk_widget_set_size_request(port_edit_, 70, 30);
+  gtk_container_add(GTK_CONTAINER(hbox), port_edit_);
+
+  GtkWidget* button = gtk_button_new_with_label("Connect");
+  gtk_widget_set_size_request(button, 70, 30);
+  g_signal_connect(button, "clicked", G_CALLBACK(OnClickedCallback), this);
+  gtk_container_add(GTK_CONTAINER(hbox), button);
+
+  GtkWidget* halign = gtk_alignment_new(1, 0, 0, 0);
+  gtk_container_add(GTK_CONTAINER(halign), hbox);
+  gtk_box_pack_start(GTK_BOX(vbox_), halign, FALSE, FALSE, 0);
+
+  gtk_widget_show_all(window_);
+
+  if (autoconnect_)
+    g_idle_add(SimulateButtonClick, button);
+}
+
+void GtkMainWnd::SwitchToPeerList(const Peers& peers) {
+  LOG(INFO) << __FUNCTION__;
+
+  if (!peer_list_) {
+    gtk_container_set_border_width(GTK_CONTAINER(window_), 0);
+    if (vbox_) {
+      gtk_widget_destroy(vbox_);
+      vbox_ = NULL;
+      server_edit_ = NULL;
+      port_edit_ = NULL;
+    } else if (draw_area_) {
+      gtk_widget_destroy(draw_area_);
+      draw_area_ = NULL;
+      draw_buffer_.reset();
     }
 
-    if (me->destroyed_ && prev_nested_msg == NULL) {
-      me->OnDestroyed();
-      me->wnd_ = NULL;
-      me->destroyed_ = false;
-    }
-
-    me->nested_msg_ = prev_nested_msg;
+    peer_list_ = gtk_tree_view_new();
+    g_signal_connect(peer_list_, "row-activated",
+                     G_CALLBACK(OnRowActivatedCallback), this);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(peer_list_), FALSE);
+    InitializeList(peer_list_);
+    gtk_container_add(GTK_CONTAINER(window_), peer_list_);
+    gtk_widget_show_all(window_);
   } else {
-    result = ::DefWindowProc(hwnd, msg, wp, lp);
+    GtkListStore* store =
+        GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(peer_list_)));
+    gtk_list_store_clear(store);
   }
 
-  return result;
+  AddToList(peer_list_, "List of currently connected peers:", -1);
+  for (Peers::const_iterator i = peers.begin(); i != peers.end(); ++i)
+    AddToList(peer_list_, i->second.c_str(), i->first);
+
+  if (autocall_ && peers.begin() != peers.end())
+    g_idle_add(SimulateLastRowActivated, peer_list_);
 }
 
-// static
-bool MainWnd::RegisterWindowClass() {
-  if (wnd_class_)
-    return true;
+void GtkMainWnd::SwitchToStreamingUI() {
+  LOG(INFO) << __FUNCTION__;
 
-  WNDCLASSEX wcex = { sizeof(WNDCLASSEX) };
-  wcex.style = CS_DBLCLKS;
-  wcex.hInstance = GetModuleHandle(NULL);
-  wcex.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
-  wcex.hCursor = ::LoadCursor(NULL, IDC_ARROW);
-  wcex.lpfnWndProc = &WndProc;
-  wcex.lpszClassName = kClassName;
-  wnd_class_ = ::RegisterClassEx(&wcex);
-  ASSERT(wnd_class_ != 0);
-  return wnd_class_ != 0;
+  ASSERT(draw_area_ == NULL);
+
+  gtk_container_set_border_width(GTK_CONTAINER(window_), 0);
+  if (peer_list_) {
+    gtk_widget_destroy(peer_list_);
+    peer_list_ = NULL;
+  }
+
+  draw_area_ = gtk_drawing_area_new();
+  gtk_container_add(GTK_CONTAINER(window_), draw_area_);
+
+  gtk_widget_show_all(window_);
 }
 
-void MainWnd::CreateChildWindow(HWND* wnd, MainWnd::ChildWindowID id,
-                                const wchar_t* class_name, DWORD control_style,
-                                DWORD ex_style) {
-  if (::IsWindow(*wnd))
-    return;
-
-  // Child windows are invisible at first, and shown after being resized.
-  DWORD style = WS_CHILD | control_style;
-  *wnd = ::CreateWindowEx(ex_style, class_name, L"", style,
-                          100, 100, 100, 100, wnd_,
-                          reinterpret_cast<HMENU>(id),
-                          GetModuleHandle(NULL), NULL);
-  ASSERT(::IsWindow(*wnd) != FALSE);
-  ::SendMessage(*wnd, WM_SETFONT, reinterpret_cast<WPARAM>(GetDefaultFont()),
-                TRUE);
+void GtkMainWnd::OnDestroyed(GtkWidget* widget, GdkEvent* event) {
+  callback_->Close();
+  window_ = NULL;
+  draw_area_ = NULL;
+  vbox_ = NULL;
+  server_edit_ = NULL;
+  port_edit_ = NULL;
+  peer_list_ = NULL;
 }
 
-void MainWnd::CreateChildWindows() {
-  // Create the child windows in tab order.
-  CreateChildWindow(&label1_, LABEL1_ID, L"Static", ES_CENTER | ES_READONLY, 0);
-  CreateChildWindow(&edit1_, EDIT_ID, L"Edit",
-                    ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
-  CreateChildWindow(&label2_, LABEL2_ID, L"Static", ES_CENTER | ES_READONLY, 0);
-  CreateChildWindow(&edit2_, EDIT_ID, L"Edit",
-                    ES_LEFT | ES_NOHIDESEL | WS_TABSTOP, WS_EX_CLIENTEDGE);
-  CreateChildWindow(&button_, BUTTON_ID, L"Button", BS_CENTER | WS_TABSTOP, 0);
-
-  CreateChildWindow(&listbox_, LISTBOX_ID, L"ListBox",
-                    LBS_HASSTRINGS | LBS_NOTIFY, WS_EX_CLIENTEDGE);
-
-  ::SetWindowTextA(edit1_, GetDefaultServerName().c_str());
-  ::SetWindowTextA(edit2_, "8888");
+void GtkMainWnd::OnClicked(GtkWidget* widget) {
+  // Make the connect button insensitive, so that it cannot be clicked more than
+  // once.  Now that the connection includes auto-retry, it should not be
+  // necessary to click it more than once.
+  gtk_widget_set_sensitive(widget, false);
+  server_ = gtk_entry_get_text(GTK_ENTRY(server_edit_));
+  port_ = gtk_entry_get_text(GTK_ENTRY(port_edit_));
+  int port = port_.length() ? atoi(port_.c_str()) : 0;
+  callback_->StartLogin(server_, port);
 }
 
-void MainWnd::LayoutConnectUI(bool show) {
-  struct Windows {
-    HWND wnd;
-    const wchar_t* text;
-    size_t width;
-    size_t height;
-  } windows[] = {
-    { label1_, L"Server" },
-    { edit1_, L"XXXyyyYYYgggXXXyyyYYYggg" },
-    { label2_, L":" },
-    { edit2_, L"XyXyX" },
-    { button_, L"Connect" },
-  };
+void GtkMainWnd::OnKeyPress(GtkWidget* widget, GdkEventKey* key) {
+  if (key->type == GDK_KEY_PRESS) {
+    switch (key->keyval) {
+     case GDK_Escape:
+       if (draw_area_) {
+         callback_->DisconnectFromCurrentPeer();
+       } else if (peer_list_) {
+         callback_->DisconnectFromServer();
+       }
+       break;
 
-  if (show) {
-    const size_t kSeparator = 5;
-    size_t total_width = (ARRAYSIZE(windows) - 1) * kSeparator;
+     case GDK_KP_Enter:
+     case GDK_Return:
+       if (vbox_) {
+         OnClicked(NULL);
+       } else if (peer_list_) {
+         // OnRowActivated will be called automatically when the user
+         // presses enter.
+       }
+       break;
 
-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
-      CalculateWindowSizeForText(windows[i].wnd, windows[i].text,
-                                 &windows[i].width, &windows[i].height);
-      total_width += windows[i].width;
-    }
-
-    RECT rc;
-    ::GetClientRect(wnd_, &rc);
-    size_t x = (rc.right / 2) - (total_width / 2);
-    size_t y = rc.bottom / 2;
-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
-      size_t top = y - (windows[i].height / 2);
-      ::MoveWindow(windows[i].wnd, static_cast<int>(x), static_cast<int>(top),
-                   static_cast<int>(windows[i].width),
-                   static_cast<int>(windows[i].height),
-                   TRUE);
-      x += kSeparator + windows[i].width;
-      if (windows[i].text[0] != 'X')
-        ::SetWindowText(windows[i].wnd, windows[i].text);
-      ::ShowWindow(windows[i].wnd, SW_SHOWNA);
-    }
-  } else {
-    for (size_t i = 0; i < ARRAYSIZE(windows); ++i) {
-      ::ShowWindow(windows[i].wnd, SW_HIDE);
+     default:
+       break;
     }
   }
 }
 
-void MainWnd::LayoutPeerListUI(bool show) {
-  if (show) {
-    RECT rc;
-    ::GetClientRect(wnd_, &rc);
-    ::MoveWindow(listbox_, 0, 0, rc.right, rc.bottom, TRUE);
-    ::ShowWindow(listbox_, SW_SHOWNA);
-  } else {
-    ::ShowWindow(listbox_, SW_HIDE);
-    InvalidateRect(wnd_, NULL, TRUE);
+void GtkMainWnd::OnRowActivated(GtkTreeView* tree_view, GtkTreePath* path,
+                                GtkTreeViewColumn* column) {
+  ASSERT(peer_list_ != NULL);
+  GtkTreeIter iter;
+  GtkTreeModel* model;
+  GtkTreeSelection* selection =
+      gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_view));
+  if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+     char* text;
+     int id = -1;
+     gtk_tree_model_get(model, &iter, 0, &text, 1, &id,  -1);
+     if (id != -1)
+       callback_->ConnectToPeer(id);
+     g_free(text);
   }
 }
 
-void MainWnd::HandleTabbing() {
-  bool shift = ((::GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-  UINT next_cmd = shift ? GW_HWNDPREV : GW_HWNDNEXT;
-  UINT loop_around_cmd = shift ? GW_HWNDLAST : GW_HWNDFIRST;
-  HWND focus = GetFocus(), next;
-  do {
-    next = ::GetWindow(focus, next_cmd);
-    if (IsWindowVisible(next) &&
-        (GetWindowLong(next, GWL_STYLE) & WS_TABSTOP)) {
-      break;
+void GtkMainWnd::OnRedraw() {
+  gdk_threads_enter();
+
+  VideoRenderer* remote_renderer = remote_renderer_.get();
+  if (remote_renderer && remote_renderer->image() != NULL &&
+      draw_area_ != NULL) {
+    int width = remote_renderer->width();
+    int height = remote_renderer->height();
+
+    if (!draw_buffer_.get()) {
+      draw_buffer_size_ = (width * height * 4) * 4;
+      draw_buffer_.reset(new uint8[draw_buffer_size_]);
+      gtk_widget_set_size_request(draw_area_, width * 2, height * 2);
     }
 
-    if (!next) {
-      next = ::GetWindow(focus, loop_around_cmd);
-      if (IsWindowVisible(next) &&
-          (GetWindowLong(next, GWL_STYLE) & WS_TABSTOP)) {
-        break;
+    const uint32* image = reinterpret_cast<const uint32*>(
+        remote_renderer->image());
+    uint32* scaled = reinterpret_cast<uint32*>(draw_buffer_.get());
+    for (int r = 0; r < height; ++r) {
+      for (int c = 0; c < width; ++c) {
+        int x = c * 2;
+        scaled[x] = scaled[x + 1] = image[c];
+      }
+
+      uint32* prev_line = scaled;
+      scaled += width * 2;
+      memcpy(scaled, prev_line, (width * 2) * 4);
+
+      image += width;
+      scaled += width * 2;
+    }
+
+    VideoRenderer* local_renderer = local_renderer_.get();
+    if (local_renderer && local_renderer->image()) {
+      image = reinterpret_cast<const uint32*>(local_renderer->image());
+      scaled = reinterpret_cast<uint32*>(draw_buffer_.get());
+      // Position the local preview on the right side.
+      scaled += (width * 2) - (local_renderer->width() / 2);
+      // right margin...
+      scaled -= 10;
+      // ... towards the bottom.
+      scaled += (height * width * 4) -
+                ((local_renderer->height() / 2) *
+                 (local_renderer->width() / 2) * 4);
+      // bottom margin...
+      scaled -= (width * 2) * 5;
+      for (int r = 0; r < local_renderer->height(); r += 2) {
+        for (int c = 0; c < local_renderer->width(); c += 2) {
+          scaled[c / 2] = image[c + r * local_renderer->width()];
+        }
+        scaled += width * 2;
       }
     }
-    focus = next;
-  } while (true);
-  ::SetFocus(next);
+
+    gdk_draw_rgb_32_image(draw_area_->window,
+                          draw_area_->style->fg_gc[GTK_STATE_NORMAL],
+                          0,
+                          0,
+                          width * 2,
+                          height * 2,
+                          GDK_RGB_DITHER_MAX,
+                          draw_buffer_.get(),
+                          (width * 2) * 4);
+  }
+
+  gdk_threads_leave();
 }
 
-//
-// MainWnd::VideoRenderer
-//
-
-MainWnd::VideoRenderer::VideoRenderer(
-    HWND wnd, int width, int height,
+GtkMainWnd::VideoRenderer::VideoRenderer(
+    GtkMainWnd* main_wnd,
     webrtc::VideoTrackInterface* track_to_render)
-    : wnd_(wnd), rendered_track_(track_to_render) {
-  ::InitializeCriticalSection(&buffer_lock_);
-  ZeroMemory(&bmi_, sizeof(bmi_));
-  bmi_.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-  bmi_.bmiHeader.biPlanes = 1;
-  bmi_.bmiHeader.biBitCount = 32;
-  bmi_.bmiHeader.biCompression = BI_RGB;
-  bmi_.bmiHeader.biWidth = width;
-  bmi_.bmiHeader.biHeight = -height;
-  bmi_.bmiHeader.biSizeImage = width * height *
-                              (bmi_.bmiHeader.biBitCount >> 3);
+    : width_(0),
+      height_(0),
+      main_wnd_(main_wnd),
+      rendered_track_(track_to_render) {
   rendered_track_->AddRenderer(this);
 }
 
-MainWnd::VideoRenderer::~VideoRenderer() {
+GtkMainWnd::VideoRenderer::~VideoRenderer() {
   rendered_track_->RemoveRenderer(this);
-  ::DeleteCriticalSection(&buffer_lock_);
 }
 
-void MainWnd::VideoRenderer::SetSize(int width, int height) {
-  AutoLock<VideoRenderer> lock(this);
-
-  bmi_.bmiHeader.biWidth = width;
-  bmi_.bmiHeader.biHeight = -height;
-  bmi_.bmiHeader.biSizeImage = width * height *
-                               (bmi_.bmiHeader.biBitCount >> 3);
-  image_.reset(new uint8[bmi_.bmiHeader.biSizeImage]);
+void GtkMainWnd::VideoRenderer::SetSize(int width, int height) {
+  gdk_threads_enter();
+  width_ = width;
+  height_ = height;
+  image_.reset(new uint8[width * height * 4]);
+  gdk_threads_leave();
 }
 
-void MainWnd::VideoRenderer::RenderFrame(const cricket::VideoFrame* frame) {
-  if (!frame)
-    return;
+void GtkMainWnd::VideoRenderer::RenderFrame(const cricket::VideoFrame* frame) {
+  gdk_threads_enter();
 
-  {
-    AutoLock<VideoRenderer> lock(this);
-
-    ASSERT(image_.get() != NULL);
-    frame->ConvertToRgbBuffer(cricket::FOURCC_ARGB,
-                              image_.get(),
-                              bmi_.bmiHeader.biSizeImage,
-                              bmi_.bmiHeader.biWidth *
-                              bmi_.bmiHeader.biBitCount / 8);
+  int size = width_ * height_ * 4;
+  // TODO: Convert directly to RGBA
+  frame->ConvertToRgbBuffer(cricket::FOURCC_ARGB,
+                            image_.get(),
+                            size,
+                            width_ * 4);
+  // Convert the B,G,R,A frame to R,G,B,A, which is accepted by GTK.
+  // The 'A' is just padding for GTK, so we can use it as temp.
+  uint8* pix = image_.get();
+  uint8* end = image_.get() + size;
+  while (pix < end) {
+    pix[3] = pix[0];     // Save B to A.
+    pix[0] = pix[2];  // Set Red.
+    pix[2] = pix[3];  // Set Blue.
+    pix[3] = 0xFF;     // Fixed Alpha.
+    pix += 4;
   }
-  InvalidateRect(wnd_, NULL, TRUE);
+
+  gdk_threads_leave();
+
+  g_idle_add(Redraw, main_wnd_);
 }
+
+
