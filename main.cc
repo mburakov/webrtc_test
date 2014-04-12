@@ -25,8 +25,6 @@
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <gtk/gtk.h>
-
 #include "backend/conductor.h"
 #include "backend/flagdefs.h"
 #include "main_wnd.h"
@@ -35,9 +33,17 @@
 #include "talk/base/ssladapter.h"
 #include "talk/base/thread.h"
 
+#include <QtWidgets/QApplication>
+
+
+namespace
+{
+  static QApplication* app;
+};
+
 class CustomSocketServer : public talk_base::PhysicalSocketServer {
  public:
-  CustomSocketServer(talk_base::Thread* thread, GtkMainWnd* wnd)
+  CustomSocketServer(talk_base::Thread* thread, QtMainWnd* wnd)
       : thread_(thread), wnd_(wnd), conductor_(NULL), client_(NULL) {}
   virtual ~CustomSocketServer() {}
 
@@ -51,8 +57,8 @@ class CustomSocketServer : public talk_base::PhysicalSocketServer {
     // different thread.  Alternatively we could look at merging the two loops
     // by implementing a dispatcher for the socket server and/or use
     // g_main_context_set_poll_func.
-      while (gtk_events_pending())
-        gtk_main_iteration();
+
+    app->processEvents();
 
     if (!wnd_->IsWindow() && !conductor_->connection_active() &&
         client_ != NULL && !client_->is_connected()) {
@@ -64,15 +70,13 @@ class CustomSocketServer : public talk_base::PhysicalSocketServer {
 
  protected:
   talk_base::Thread* thread_;
-  GtkMainWnd* wnd_;
+  QtMainWnd* wnd_;
   Conductor* conductor_;
   PeerConnectionClient* client_;
 };
 
 int main(int argc, char* argv[]) {
-  gtk_init(&argc, &argv);
-  g_type_init();
-  g_thread_init(NULL);
+  app = new QApplication(argc, argv);
 
   FlagList::SetFlagsFromCommandLine(&argc, argv, true);
   if (FLAG_help) {
@@ -87,7 +91,7 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  GtkMainWnd wnd(FLAG_server, FLAG_port, FLAG_autoconnect, FLAG_autocall);
+  QtMainWnd wnd(FLAG_server, FLAG_port, FLAG_autoconnect, FLAG_autocall);
   wnd.Create();
 
   talk_base::AutoThread auto_thread;

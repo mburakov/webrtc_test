@@ -32,21 +32,24 @@
 #include "backend/main_wnd.h"
 #include "backend/peer_connection_client.h"
 
-// Forward declarations.
-typedef struct _GtkWidget GtkWidget;
-typedef union _GdkEvent GdkEvent;
-typedef struct _GdkEventKey GdkEventKey;
-typedef struct _GtkTreeView GtkTreeView;
-typedef struct _GtkTreePath GtkTreePath;
-typedef struct _GtkTreeViewColumn GtkTreeViewColumn;
+#include <QtWidgets/QWidget>
+
+
+class QPushButton;
+class QLineEdit;
+class QListWidget;
+class QListWidgetItem;
+
 
 // Implements the main UI of the peer connection client.
 // This is functionally equivalent to the MainWnd class in the Windows
 // implementation.
-class GtkMainWnd : public MainWindow {
+class QtMainWnd : public QWidget, public MainWindow {
+  Q_OBJECT
+
  public:
-  GtkMainWnd(const char* server, int port, bool autoconnect, bool autocall);
-  ~GtkMainWnd();
+  QtMainWnd(const char* server, int port, bool autoconnect, bool autocall);
+  ~QtMainWnd();
 
   virtual void RegisterObserver(MainWndCallback* callback);
   virtual bool IsWindow();
@@ -69,27 +72,20 @@ class GtkMainWnd : public MainWindow {
   // Destroys the window.  When the window is destroyed, it ends the
   // main message loop.
   bool Destroy();
+ protected slots:
 
-  // Callback for when the main window is destroyed.
-  void OnDestroyed(GtkWidget* widget, GdkEvent* event);
+  void OnConnect();
+  void OnPeerActivated(QListWidgetItem* peer);
+  void HandleUIThreadCallback(int msg_id, void* data);
 
-  // Callback for when the user clicks the "Connect" button.
-  void OnClicked(GtkWidget* widget);
-
-  // Callback for keystrokes.  Used to capture Esc and Return.
-  void OnKeyPress(GtkWidget* widget, GdkEventKey* key);
-
-  // Callback when the user double clicks a peer in order to initiate a
-  // connection.
-  void OnRowActivated(GtkTreeView* tree_view, GtkTreePath* path,
-                      GtkTreeViewColumn* column);
-
-  void OnRedraw();
+ protected:
+  virtual void paintEvent(QPaintEvent* event);
+  virtual void closeEvent(QCloseEvent* event);
 
  protected:
   class VideoRenderer : public webrtc::VideoRendererInterface {
    public:
-    VideoRenderer(GtkMainWnd* main_wnd,
+    VideoRenderer(QtMainWnd* main_wnd,
                   webrtc::VideoTrackInterface* track_to_render);
     virtual ~VideoRenderer();
 
@@ -113,17 +109,19 @@ class GtkMainWnd : public MainWindow {
     talk_base::scoped_ptr<uint8[]> image_;
     int width_;
     int height_;
-    GtkMainWnd* main_wnd_;
+    QtMainWnd* main_wnd_;
     talk_base::scoped_refptr<webrtc::VideoTrackInterface> rendered_track_;
   };
 
  protected:
-  GtkWidget* window_;  // Our main window.
-  GtkWidget* draw_area_;  // The drawing surface for rendering video streams.
-  GtkWidget* vbox_;  // Container for the Connect UI.
-  GtkWidget* server_edit_;
-  GtkWidget* port_edit_;
-  GtkWidget* peer_list_;  // The list of peers.
+  QPushButton* connect_button_;
+  QLineEdit* server_edit_;
+  QLineEdit* port_edit_;
+  QListWidget* peer_list_;
+  bool closing_;
+
+  UI state_;
+
   MainWndCallback* callback_;
   std::string server_;
   std::string port_;
@@ -131,8 +129,6 @@ class GtkMainWnd : public MainWindow {
   bool autocall_;
   talk_base::scoped_ptr<VideoRenderer> local_renderer_;
   talk_base::scoped_ptr<VideoRenderer> remote_renderer_;
-  talk_base::scoped_ptr<uint8> draw_buffer_;
-  int draw_buffer_size_;
 };
 
 #endif  // PEERCONNECTION_SAMPLES_CLIENT_LINUX_MAIN_WND_H_
