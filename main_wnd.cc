@@ -191,13 +191,13 @@ void QtMainWnd::paintEvent(QPaintEvent* event)
   if (remote_renderer_)
   {
     const QImage remote(remote_renderer_->image(), remote_renderer_->width(), remote_renderer_->height(), QImage::Format_ARGB32);
-    painter.drawImage(QPoint(0, 0), remote);
+    painter.drawImage(QPoint(0, 0), remote.scaled(width(), height()));
   }
 
   if (local_renderer_)
   {
     const QImage local(local_renderer_->image(), local_renderer_->width(), local_renderer_->height(), QImage::Format_ARGB32);
-    painter.drawImage(QPoint(0, 0), local.scaled(local.width() / 4, local.height() / 4));
+    painter.drawImage(QPoint(0, 0), local.scaled(width() / 4, height() / 4));
   }
 }
 
@@ -230,7 +230,7 @@ void QtMainWnd::VideoRenderer::RenderFrame(const cricket::VideoFrame* frame) {
                             width_ * 4);
   // Convert the B,G,R,A frame to R,G,B,A, which is accepted by GTK.
   // The 'A' is just padding for GTK, so we can use it as temp.
-  uint8* pix = image_.get();
+/*  uint8* pix = image_.get();
   uint8* end = image_.get() + size;
   while (pix < end) {
     pix[3] = pix[0];     // Save B to A.
@@ -238,7 +238,7 @@ void QtMainWnd::VideoRenderer::RenderFrame(const cricket::VideoFrame* frame) {
     pix[2] = pix[3];  // Set Blue.
     pix[3] = 0xFF;     // Fixed Alpha.
     pix += 4;
-  }
+  }*/
 
   QMetaObject::invokeMethod(main_wnd_, "repaint", Qt::QueuedConnection);
 }
