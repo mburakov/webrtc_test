@@ -35,6 +35,10 @@
 
 #include <QtWidgets/QApplication>
 
+#ifdef WIN32
+#include <Windows.h>
+#endif
+
 
 namespace
 {
@@ -75,7 +79,13 @@ class CustomSocketServer : public talk_base::PhysicalSocketServer {
   PeerConnectionClient* client_;
 };
 
+#ifdef WIN32
+int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+  int argc = __argc;
+  char** argv = __argv;
+#else
 int main(int argc, char* argv[]) {
+#endif
   app = new QApplication(argc, argv);
 
   FlagList::SetFlagsFromCommandLine(&argc, argv, true);
