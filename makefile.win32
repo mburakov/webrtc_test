@@ -1,0 +1,48 @@
+RESULT=webrtc_test.exe
+
+COMPILE=cl
+LINK=link
+MOC="..\qt5\qtbase\bin\moc.exe"
+
+DEFINES=-DJSONCPP_RELATIVE_PATH -DWIN32 -O2 -MD -EHsc
+
+INCLUDE_DIRS=\
+	-I"..\webrtc\trunk" \
+	-I"..\webrtc\trunk\third_party\jsoncpp\source\include" \
+	-I"..\qt5\qtbase\include"
+
+LIB_DIRS=\
+	-LIBPATH:"..\qt5\qtbase\lib"
+
+SOURCES=\
+	"backend\conductor.cc" \
+	"backend\defaults.cc" \
+	"backend\peer_connection_client.cc" \
+	"main.cc" \
+	"main_wnd.cc" \
+	"main_wnd_moc.cc"
+
+LIBS=\
+	"Qt5Core.lib" \
+	"Qt5Gui.lib" \
+	"Qt5Widgets.lib" \
+	"Secur32.lib" \
+	"strmiids.lib" \
+	"msdmo.lib" \
+	"dmoguids.lib" \
+	"wmcodecdspuuid.lib" \
+	"Gdi32.lib"
+
+all: $(RESULT)
+
+main_wnd_moc.cc: main_wnd.h
+	$(MOC) main_wnd.h > main_wnd_moc.cc
+
+$(RESULT): $(SOURCES)
+	$(COMPILE) -c $(DEFINES) $(INCLUDE_DIRS) $(SOURCES)
+	$(LINK) *.obj $(LIB_DIRS) $(LIBS) "libs\*.lib" -NODEFAULTLIB:atls.lib -out:$(RESULT)
+
+clean:
+	rm $(RESULT) $(COMPLETION) main_wnd_moc.cc
+
+.PHONY: all clean
