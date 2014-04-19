@@ -4,7 +4,13 @@ COMPILE=cl
 LINK=link
 MOC="..\qt5\qtbase\bin\moc.exe"
 
-DEFINES=-DJSONCPP_RELATIVE_PATH -DWIN32 -O2 -MD -EHsc
+DEFINES_DEBUG=-D_DEBUG -Od -MDd -Zi
+DEFINES_RELEASE=-DNDEBUG -O2 -MD
+DEFINES=-DJSONCPP_RELATIVE_PATH -DWIN32 -EHsc $(DEFINES_DEBUG)
+
+LINKER_DEBUG=-DEBUG "libs.debug\*.lib" "Qt5Cored.lib" "Qt5Guid.lib" "Qt5Widgetsd.lib"
+LINKER_RELEASE="libs.release\*.lib" "Qt5Core.lib" "Qt5Gui.lib" "Qt5Widgets.lib"
+LINKER_FLAGS=$(LINKER_DEBUG)
 
 INCLUDE_DIRS=\
 	-I"..\webrtc\trunk" \
@@ -12,7 +18,8 @@ INCLUDE_DIRS=\
 	-I"..\qt5\qtbase\include"
 
 LIB_DIRS=\
-	-LIBPATH:"..\qt5\qtbase\lib"
+	-LIBPATH:"..\qt5\qtbase\lib" \
+	-LIBPATH:"..\depot_tools\win_toolchain\vs2013_files\wdk\lib\Atl\i386"
 
 SOURCES=\
 	"backend\conductor.cc" \
@@ -22,10 +29,7 @@ SOURCES=\
 	"main_wnd.cc" \
 	"main_wnd_moc.cc"
 
-LIBS=\
-	"Qt5Core.lib" \
-	"Qt5Gui.lib" \
-	"Qt5Widgets.lib" \
+WIN_LIBS=\
 	"Secur32.lib" \
 	"strmiids.lib" \
 	"msdmo.lib" \
@@ -40,9 +44,9 @@ main_wnd_moc.cc: main_wnd.h
 
 $(RESULT): $(SOURCES)
 	$(COMPILE) -c $(DEFINES) $(INCLUDE_DIRS) $(SOURCES)
-	$(LINK) *.obj $(LIB_DIRS) $(LIBS) "libs\*.lib" -NODEFAULTLIB:atls.lib -out:$(RESULT)
+	$(LINK) $(LINKER_FLAGS) *.obj $(LIB_DIRS) $(WIN_LIBS) -out:$(RESULT)
 
 clean:
-	rm $(RESULT) $(COMPLETION) main_wnd_moc.cc
+	del $(RESULT) *.obj main_wnd_moc.cc
 
 .PHONY: all clean
