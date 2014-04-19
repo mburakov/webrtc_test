@@ -28,6 +28,8 @@
 
 #include "main_wnd.h"
 
+#include <QtCore/QMutex>
+#include <QtCore/QMutexLocker>
 #include <QtGui/QImage>
 #include <QtGui/QPainter>
 #include <QtWidgets/QHBoxLayout>
@@ -103,13 +105,17 @@ void QtMainWnd::QueueUIThreadCallback(int msg_id, void* data) {
   QMetaObject::invokeMethod(this, "HandleUIThreadCallback", Qt::QueuedConnection, Q_ARG(int, msg_id), Q_ARG(void*, data));
 }
 
+QSharedPointer<QMutexLocker> QtMainWnd::Synchronized()
+{
+  static QMutex mutex;
+  return QSharedPointer<QMutexLocker>(new QMutexLocker(&mutex));
+}
+
 bool QtMainWnd::Create() {
   show();
   SwitchToConnectUI();
   return true;
 }
-
-
 
 bool QtMainWnd::Destroy() {
   return true;
@@ -186,6 +192,9 @@ void QtMainWnd::paintEvent(QPaintEvent* event)
   if (!local_renderer_ && !remote_renderer_)
     return;
 
+  // Synchronized with frame size change
+  const auto& sync = Synchronized();
+
   QPainter painter(this);
 
   if (remote_renderer_)
@@ -216,6 +225,9 @@ QtMainWnd::VideoRenderer::~VideoRenderer() {
 }
 
 void QtMainWnd::VideoRenderer::SetSize(int width, int height) {
+  // Must be synchronized with draw function
+  const auto& sync = main_wnd_->Synchronized();
+
   width_ = width;
   height_ = height;
   image_.reset(new uint8[width * height * 4]);

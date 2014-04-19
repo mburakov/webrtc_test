@@ -32,6 +32,7 @@
 #include "backend/main_wnd.h"
 #include "backend/peer_connection_client.h"
 
+#include <QtCore/QSharedPointer>
 #include <QtWidgets/QWidget>
 
 
@@ -39,6 +40,7 @@ class QPushButton;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QMutexLocker;
 
 
 // Implements the main UI of the peer connection client.
@@ -65,6 +67,9 @@ class QtMainWnd : public QWidget, public MainWindow {
   virtual void StopRemoteRenderer();
 
   virtual void QueueUIThreadCallback(int msg_id, void* data);
+
+  // Thread locker function
+  QSharedPointer<QMutexLocker> Synchronized();
 
   // Creates and shows the main window with the |Connect UI| enabled.
   bool Create();
