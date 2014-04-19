@@ -5,7 +5,6 @@ Peerconnection client example from webrtc migrated to Qt5
 Building for GNU/Linux
 ======================
 Are you serious?
-----------------
 
 Building for Windows 8.1
 ========================
@@ -25,6 +24,7 @@ WebRTC
 12. Remove all the generated lib and obj files from trunk\out\Release subdir
 13. Replace "/MT" with "/MD" in all the generated dot ninja files in trunk\out subdir
 14. In the trunk subdirectory start building again: `ninja -C out\Release`
+
 Qt5
 ---
 1. Install [ActiveState Perl](http://downloads.activestate.com/ActivePerl/releases/5.16.3.1604/ActivePerl-5.16.3.1604-MSWin32-x64-298023.msi)
@@ -36,7 +36,8 @@ Qt5
 7. Explicitly specify platform: `set QMAKESPEC=win32-msvc2013`
 8. Configure Qt5: `configure -developer-build -opensource -mp -nomake examples -nomake tests -debug-and-release -c++11 -no-warnings-are-errors -platform win32-msvc2013`
 9. Accept the license proposal
-10. After configuration is finished, run nmake
+10. After configuration is finished, run `nmake`
+
 webrtc_test
 -----------
 1. Get latest source code of webrtc_test: `git clone https://github.com/Satius/webrtc_test`
